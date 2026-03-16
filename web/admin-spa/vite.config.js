@@ -13,6 +13,7 @@ export default defineConfig(({ mode }) => {
   const httpProxy = env.VITE_HTTP_PROXY || env.HTTP_PROXY || env.http_proxy
   // 使用环境变量配置基础路径，如果未设置则使用默认值
   const basePath = env.VITE_APP_BASE_URL || (mode === 'development' ? '/admin/' : '/admin-next/')
+  const shouldOpenBrowser = env.VITE_OPEN_BROWSER === 'true'
 
   // 创建代理配置
   const proxyConfig = {
@@ -62,7 +63,7 @@ export default defineConfig(({ mode }) => {
     server: {
       port: 3001,
       host: true,
-      open: true,
+      open: shouldOpenBrowser,
       proxy: {
         // 统一的 API 代理规则 - 开发环境所有 API 请求都加 /webapi 前缀
         '/webapi': {
