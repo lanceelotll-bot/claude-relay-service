@@ -13,6 +13,7 @@ const config = require('../../../config/config')
 
 const router = express.Router()
 const execFileAsync = util.promisify(execFile)
+const repoRoot = path.join(__dirname, '../../../')
 
 // ==================== Claude Code Headers 管理 ====================
 
@@ -70,10 +71,11 @@ router.delete('/claude-code-headers/:accountId', authenticateAdmin, async (req, 
 
 // ==================== 系统更新检查 ====================
 
-// 版本比较函数
 function compareVersions(current, latest) {
   const parseVersion = (v) => {
-    const parts = v.split('.').map(Number)
+    const parts = String(v || '')
+      .split('.')
+      .map(Number)
     return {
       major: parts[0] || 0,
       minor: parts[1] || 0,
@@ -103,46 +105,63 @@ function isPanelUpdateEnabled() {
   return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on'
 }
 
-router.get('/check-updates', authenticateAdmin, async (req, res) => {
-  // 读取当前版本
-  const versionPath = path.join(__dirname, '../../../VERSION')
-  let currentVersion = '1.0.0'
+function readLocalVersion() {
+  const versionPath = path.join(repoRoot, 'VERSION')
   try {
-    currentVersion = fs.readFileSync(versionPath, 'utf8').trim()
+    return fs.readFileSync(versionPath, 'utf8').trim()
   } catch (err) {
     logger.warn('⚠️ Could not read VERSION file:', err.message)
+    return '1.0.0'
+  }
+}
+
+function normalizeGithubRepo(remoteUrl) {
+  if (!remoteUrl) {
+    return ''
   }
 
-  try {
-    // 从缓存获取
-    const cacheKey = 'version_check_cache'
-    const cached = await redis.getClient().get(cacheKey)
+  const normalized = remoteUrl.trim().replace(/\.git$/, '')
+  const match = normalized.match(/github\.com[:/]([^/]+\/[^/]+)$/i)
+  return match ? match[1] : ''
+}
 
-    if (cached && !req.query.force) {
+async function runGit(args, options = {}) {
+  const { stdout } = await execFileAsync('git', args, {
+    cwd: repoRoot,
+    timeout: 15000,
+    maxBuffer: 1024 * 1024,
+    ...options
+  })
+
+  return stdout.trim()
+}
+
+async function getUpstreamVersionStatus(forceRefresh = false) {
+  const currentVersion = readLocalVersion()
+  const cacheKey = 'version_check_cache:upstream'
+  const client = redis.getClient()
+
+  try {
+    const cached = await client.get(cacheKey)
+    if (cached && !forceRefresh) {
       const cachedData = JSON.parse(cached)
       const cacheAge = Date.now() - cachedData.timestamp
 
-      // 缓存有效期1小时
       if (cacheAge < 3600000) {
-        // 实时计算 hasUpdate，不使用缓存的值
-        const hasUpdate = compareVersions(currentVersion, cachedData.latest) < 0
-
-        return res.json({
-          success: true,
-          data: {
-        current: currentVersion,
-        latest: cachedData.latest,
-        hasUpdate, // 实时计算，不用缓存
-        releaseInfo: cachedData.releaseInfo,
-        cached: true,
-        updateSource: 'upstream',
-        canSyncInPanel: isPanelUpdateEnabled()
-      }
-    })
+        return {
+          source: 'upstream',
+          label: '上游版本',
+          current: currentVersion,
+          latest: cachedData.latest,
+          hasUpdate: compareVersions(currentVersion, cachedData.latest) < 0,
+          releaseInfo: cachedData.releaseInfo,
+          cached: true,
+          canSyncInPanel: isPanelUpdateEnabled(),
+          warning: cachedData.warning || ''
+        }
       }
     }
 
-    // 请求 GitHub API
     const githubRepo = 'wei-shaw/claude-relay-service'
     const response = await axios.get(`https://api.github.com/repos/${githubRepo}/releases/latest`, {
       headers: {
@@ -153,11 +172,7 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
     })
 
     const release = response.data
-    const latestVersion = release.tag_name.replace(/^v/, '')
-
-    // 比较版本
-    const hasUpdate = compareVersions(currentVersion, latestVersion) < 0
-
+    const latestVersion = String(release.tag_name || '').replace(/^v/, '') || currentVersion
     const releaseInfo = {
       name: release.name,
       body: release.body,
@@ -165,8 +180,7 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
       htmlUrl: release.html_url
     }
 
-    // 缓存结果（不缓存 hasUpdate，因为它应该实时计算）
-    await redis.getClient().set(
+    await client.set(
       cacheKey,
       JSON.stringify({
         latest: latestVersion,
@@ -175,104 +189,215 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
       }),
       'EX',
       3600
-    ) // 1小时过期
+    )
 
-    return res.json({
-      success: true,
-      data: {
-        current: currentVersion,
-        latest: latestVersion,
-        hasUpdate,
-        releaseInfo,
-        cached: false,
-        updateSource: 'upstream',
-        canSyncInPanel: isPanelUpdateEnabled()
-      }
-    })
+    return {
+      source: 'upstream',
+      label: '上游版本',
+      current: currentVersion,
+      latest: latestVersion,
+      hasUpdate: compareVersions(currentVersion, latestVersion) < 0,
+      releaseInfo,
+      cached: false,
+      canSyncInPanel: isPanelUpdateEnabled(),
+      warning: ''
+    }
   } catch (error) {
-    // 改进错误日志记录
-    const errorDetails = {
-      message: error.message || 'Unknown error',
-      code: error.code,
-      response: error.response
-        ? {
-            status: error.response.status,
-            statusText: error.response.statusText,
-            data: error.response.data
-          }
-        : null,
-      request: error.request ? 'Request was made but no response received' : null
-    }
+    const message = error.message || 'Failed to check upstream updates'
 
-    logger.error('❌ Failed to check for updates:', errorDetails.message)
-
-    // 处理 404 错误 - 仓库或版本不存在
     if (error.response && error.response.status === 404) {
-      return res.json({
-        success: true,
-        data: {
-          current: currentVersion,
-          latest: currentVersion,
-          hasUpdate: false,
-          releaseInfo: {
-            name: 'No releases found',
-            body: 'The GitHub repository has no releases yet.',
-            publishedAt: new Date().toISOString(),
-            htmlUrl: '#'
-          },
-          warning: 'GitHub repository has no releases',
-          updateSource: 'upstream',
-          canSyncInPanel: isPanelUpdateEnabled()
-        }
-      })
-    }
-
-    // 如果是网络错误，尝试返回缓存的数据
-    if (error.code === 'ECONNREFUSED' || error.code === 'ETIMEDOUT' || error.code === 'ENOTFOUND') {
-      const cacheKey = 'version_check_cache'
-      const cached = await redis.getClient().get(cacheKey)
-
-      if (cached) {
-        const cachedData = JSON.parse(cached)
-        // 实时计算 hasUpdate
-        const hasUpdate = compareVersions(currentVersion, cachedData.latest) < 0
-
-        return res.json({
-          success: true,
-          data: {
-            current: currentVersion,
-            latest: cachedData.latest,
-            hasUpdate, // 实时计算
-            releaseInfo: cachedData.releaseInfo,
-            cached: true,
-            warning: 'Using cached data due to network error',
-            updateSource: 'upstream',
-            canSyncInPanel: isPanelUpdateEnabled()
-          }
-        })
-      }
-    }
-
-    // 其他错误返回当前版本信息
-    return res.json({
-      success: true,
-      data: {
+      return {
+        source: 'upstream',
+        label: '上游版本',
         current: currentVersion,
         latest: currentVersion,
         hasUpdate: false,
         releaseInfo: {
-          name: 'Update check failed',
-          body: `Unable to check for updates: ${error.message || 'Unknown error'}`,
+          name: 'No releases found',
+          body: 'The upstream repository has no releases yet.',
           publishedAt: new Date().toISOString(),
           htmlUrl: '#'
         },
-        error: true,
-        warning: error.message || 'Failed to check for updates',
-        updateSource: 'upstream',
-        canSyncInPanel: isPanelUpdateEnabled()
+        cached: false,
+        canSyncInPanel: isPanelUpdateEnabled(),
+        warning: '上游仓库暂未发布 release'
       }
-    })
+    }
+
+    if (['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND'].includes(error.code)) {
+      const cached = await client.get(cacheKey)
+      if (cached) {
+        const cachedData = JSON.parse(cached)
+        return {
+          source: 'upstream',
+          label: '上游版本',
+          current: currentVersion,
+          latest: cachedData.latest,
+          hasUpdate: compareVersions(currentVersion, cachedData.latest) < 0,
+          releaseInfo: cachedData.releaseInfo,
+          cached: true,
+          canSyncInPanel: isPanelUpdateEnabled(),
+          warning: '网络异常，当前显示缓存的上游版本信息'
+        }
+      }
+    }
+
+    logger.error('❌ Failed to check upstream updates:', message)
+    return {
+      source: 'upstream',
+      label: '上游版本',
+      current: currentVersion,
+      latest: currentVersion,
+      hasUpdate: false,
+      releaseInfo: {
+        name: 'Update check failed',
+        body: `Unable to check for updates: ${message}`,
+        publishedAt: new Date().toISOString(),
+        htmlUrl: '#'
+      },
+      cached: false,
+      canSyncInPanel: isPanelUpdateEnabled(),
+      warning: message
+    }
   }
+}
+
+async function getCustomVersionStatus(forceRefresh = false) {
+  const cacheKey = 'version_check_cache:custom'
+  const client = redis.getClient()
+
+  try {
+    const branchRaw = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])
+    const currentBranch = branchRaw && branchRaw !== 'HEAD' ? branchRaw : process.env.CUSTOM_UPDATE_BRANCH || 'develop'
+    const currentCommit = await runGit(['rev-parse', 'HEAD'])
+    const currentShortCommit = await runGit(['rev-parse', '--short', 'HEAD'])
+    const originUrl = await runGit(['config', '--get', 'remote.origin.url'])
+    const originRepo = normalizeGithubRepo(originUrl)
+
+    if (!originRepo) {
+      return {
+        source: 'custom',
+        label: '二开版本',
+        branch: currentBranch,
+        repo: '',
+        current: `${currentBranch}@${currentShortCommit}`,
+        latest: `${currentBranch}@${currentShortCommit}`,
+        hasUpdate: false,
+        compareUrl: '',
+        branchUrl: '',
+        warning: '未检测到 origin GitHub 仓库，暂时无法检查二开更新',
+        cached: false
+      }
+    }
+
+    const cached = await client.get(cacheKey)
+    if (cached && !forceRefresh) {
+      const cachedData = JSON.parse(cached)
+      const cacheAge = Date.now() - cachedData.timestamp
+      if (
+        cacheAge < 300000 &&
+        cachedData.currentCommit === currentCommit &&
+        cachedData.branch === currentBranch &&
+        cachedData.repo === originRepo
+      ) {
+        return cachedData.payload
+      }
+    }
+
+    await runGit(['fetch', 'origin', currentBranch, '--prune'])
+
+    const remoteRef = `origin/${currentBranch}`
+    const remoteCommit = await runGit(['rev-parse', remoteRef])
+    const remoteShortCommit = await runGit(['rev-parse', '--short', remoteRef])
+    const counts = await runGit(['rev-list', '--left-right', '--count', `HEAD...${remoteRef}`])
+    const [aheadCountRaw, behindCountRaw] = counts.split(/\s+/)
+    const aheadCount = Number(aheadCountRaw || 0)
+    const behindCount = Number(behindCountRaw || 0)
+    const hasUpdate = behindCount > 0
+    const compareUrl = `https://github.com/${originRepo}/compare/${currentCommit}...${currentBranch}`
+    const branchUrl = `https://github.com/${originRepo}/tree/${currentBranch}`
+
+    const payload = {
+      source: 'custom',
+      label: '二开版本',
+      branch: currentBranch,
+      repo: originRepo,
+      current: `${currentBranch}@${currentShortCommit}`,
+      latest: `${currentBranch}@${remoteShortCommit}`,
+      hasUpdate,
+      compareUrl,
+      branchUrl,
+      releaseInfo: {
+        name: `${currentBranch} 分支`,
+        body: hasUpdate
+          ? `你的本地部署落后于 origin/${currentBranch}，可先查看差异再决定是否拉取。`
+          : `当前部署已经对齐 origin/${currentBranch}。`,
+        publishedAt: new Date().toISOString(),
+        htmlUrl: hasUpdate ? compareUrl : branchUrl
+      },
+      cached: false,
+      warning: '',
+      aheadCount,
+      behindCount,
+      currentCommit,
+      remoteCommit
+    }
+
+    await client.set(
+      cacheKey,
+      JSON.stringify({
+        timestamp: Date.now(),
+        currentCommit,
+        branch: currentBranch,
+        repo: originRepo,
+        payload
+      }),
+      'EX',
+      300
+    )
+
+    return payload
+  } catch (error) {
+    const message = error.message || 'Failed to check custom updates'
+    logger.warn('⚠️ Failed to check custom updates:', message)
+
+    return {
+      source: 'custom',
+      label: '二开版本',
+      branch: process.env.CUSTOM_UPDATE_BRANCH || 'develop',
+      repo: '',
+      current: 'unknown',
+      latest: 'unknown',
+      hasUpdate: false,
+      compareUrl: '',
+      branchUrl: '',
+      warning: `无法检查二开更新：${message}`,
+      cached: false,
+      releaseInfo: {
+        name: 'Custom update check failed',
+        body: message,
+        publishedAt: new Date().toISOString(),
+        htmlUrl: '#'
+      }
+    }
+  }
+}
+
+router.get('/check-updates', authenticateAdmin, async (req, res) => {
+  const forceRefresh = Boolean(req.query.force)
+  const [upstream, custom] = await Promise.all([
+    getUpstreamVersionStatus(forceRefresh),
+    getCustomVersionStatus(forceRefresh)
+  ])
+
+  return res.json({
+    success: true,
+    data: {
+      upstream,
+      custom,
+      canSyncInPanel: upstream.canSyncInPanel === true
+    }
+  })
 })
 
 router.post('/sync-updates', authenticateAdmin, async (req, res) => {
@@ -283,7 +408,6 @@ router.post('/sync-updates', authenticateAdmin, async (req, res) => {
     })
   }
 
-  const repoRoot = path.join(__dirname, '../../../')
   const syncScript = path.join(repoRoot, 'scripts/git-create-sync-branch.sh')
 
   if (!fs.existsSync(syncScript)) {
@@ -318,11 +442,7 @@ router.post('/sync-updates', authenticateAdmin, async (req, res) => {
       }
     })
   } catch (error) {
-    const output = [
-      error.stdout || '',
-      error.stderr || '',
-      error.message || 'Unknown error'
-    ]
+    const output = [error.stdout || '', error.stderr || '', error.message || 'Unknown error']
       .filter(Boolean)
       .join('\n')
       .trim()
@@ -418,12 +538,12 @@ router.put('/oem-settings', authenticateAdmin, async (req, res) => {
     const settings = {
       siteName: siteName.trim(),
       siteIcon: (siteIcon || '').trim(),
-      siteIconData: (siteIconData || '').trim(), // Base64数据
-      showAdminButton: showAdminButton !== false, // 默认为true
+      siteIconData: siteIconData || '',
+      showAdminButton: showAdminButton !== false,
       apiStatsNotice: {
-        enabled: apiStatsNotice?.enabled === true,
-        title: (apiStatsNotice?.title || '').trim().slice(0, 100),
-        content: (apiStatsNotice?.content || '').trim().slice(0, 2000)
+        enabled: apiStatsNotice && apiStatsNotice.enabled === true,
+        title: (apiStatsNotice && apiStatsNotice.title ? apiStatsNotice.title : '').trim(),
+        content: (apiStatsNotice && apiStatsNotice.content ? apiStatsNotice.content : '').trim()
       },
       updatedAt: new Date().toISOString()
     }
@@ -431,110 +551,10 @@ router.put('/oem-settings', authenticateAdmin, async (req, res) => {
     const client = redis.getClient()
     await client.set('oem:settings', JSON.stringify(settings))
 
-    logger.info(`✅ OEM settings updated: ${siteName}`)
-
-    return res.json({
-      success: true,
-      message: 'OEM settings updated successfully',
-      data: settings
-    })
+    return res.json({ success: true, data: settings })
   } catch (error) {
     logger.error('❌ Failed to update OEM settings:', error)
     return res.status(500).json({ error: 'Failed to update OEM settings', message: error.message })
-  }
-})
-
-// ==================== Claude Code 版本管理 ====================
-
-router.get('/claude-code-version', authenticateAdmin, async (req, res) => {
-  try {
-    const CACHE_KEY = 'claude_code_user_agent:daily'
-
-    // 获取缓存的统一User-Agent
-    const unifiedUserAgent = await redis.client.get(CACHE_KEY)
-    const ttl = unifiedUserAgent ? await redis.client.ttl(CACHE_KEY) : 0
-
-    res.json({
-      success: true,
-      userAgent: unifiedUserAgent,
-      isActive: !!unifiedUserAgent,
-      ttlSeconds: ttl,
-      lastUpdated: unifiedUserAgent ? new Date().toISOString() : null
-    })
-  } catch (error) {
-    logger.error('❌ Get unified Claude Code User-Agent error:', error)
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get User-Agent information',
-      error: error.message
-    })
-  }
-})
-
-// 🗑️ 清除统一Claude Code User-Agent缓存
-router.post('/claude-code-version/clear', authenticateAdmin, async (req, res) => {
-  try {
-    const CACHE_KEY = 'claude_code_user_agent:daily'
-
-    // 删除缓存的统一User-Agent
-    await redis.client.del(CACHE_KEY)
-
-    logger.info(`🗑️ Admin manually cleared unified Claude Code User-Agent cache`)
-
-    res.json({
-      success: true,
-      message: 'Unified User-Agent cache cleared successfully'
-    })
-  } catch (error) {
-    logger.error('❌ Clear unified User-Agent cache error:', error)
-    res.status(500).json({
-      success: false,
-      message: 'Failed to clear cache',
-      error: error.message
-    })
-  }
-})
-
-// ==================== 模型价格管理 ====================
-
-const pricingService = require('../../services/pricingService')
-
-// 获取所有模型价格数据
-router.get('/models/pricing', authenticateAdmin, async (req, res) => {
-  try {
-    if (!pricingService.pricingData || Object.keys(pricingService.pricingData).length === 0) {
-      await pricingService.loadPricingData()
-    }
-    const data = pricingService.pricingData
-    res.json({
-      success: true,
-      data: data || {}
-    })
-  } catch (error) {
-    logger.error('Failed to get model pricing:', error)
-    res.status(500).json({ error: 'Failed to get model pricing', message: error.message })
-  }
-})
-
-// 获取价格服务状态
-router.get('/models/pricing/status', authenticateAdmin, async (req, res) => {
-  try {
-    const status = pricingService.getStatus()
-    res.json({ success: true, data: status })
-  } catch (error) {
-    logger.error('Failed to get pricing status:', error)
-    res.status(500).json({ error: 'Failed to get pricing status', message: error.message })
-  }
-})
-
-// 强制刷新价格数据
-router.post('/models/pricing/refresh', authenticateAdmin, async (req, res) => {
-  try {
-    const result = await pricingService.forceUpdate()
-    res.json({ success: result.success, message: result.message })
-  } catch (error) {
-    logger.error('Failed to refresh pricing:', error)
-    res.status(500).json({ error: 'Failed to refresh pricing', message: error.message })
   }
 })
 

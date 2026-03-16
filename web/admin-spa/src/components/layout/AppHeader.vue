@@ -17,20 +17,32 @@
         >
           <template #after-title>
             <!-- 版本信息 -->
-            <div class="flex items-center gap-1 sm:gap-2">
-              <span class="font-mono text-xs text-gray-400 dark:text-gray-500 sm:text-sm"
-                >v{{ versionInfo.current || '...' }}</span
-              >
-              <!-- 更新提示 -->
+            <div class="flex flex-wrap items-center gap-1 sm:gap-2">
+              <span class="font-mono text-xs text-gray-400 dark:text-gray-500 sm:text-sm">
+                上游 v{{ versionInfo.upstream.current || '...' }}
+              </span>
               <a
-                v-if="versionInfo.hasUpdate"
+                v-if="versionInfo.upstream.hasUpdate"
                 class="inline-flex animate-pulse items-center gap-1 rounded-full border border-green-600 bg-green-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-green-600"
-                :href="versionInfo.releaseInfo?.htmlUrl || '#'"
+                :href="versionInfo.upstream.releaseInfo?.htmlUrl || '#'"
                 target="_blank"
                 title="上游有新版本可用"
               >
                 <i class="fas fa-arrow-up text-[10px]" />
                 <span>上游更新</span>
+              </a>
+              <span class="font-mono text-xs text-gray-400 dark:text-gray-500 sm:text-sm">
+                二开 {{ versionInfo.custom.current || '...' }}
+              </span>
+              <a
+                v-if="versionInfo.custom.hasUpdate"
+                class="inline-flex items-center gap-1 rounded-full border border-amber-600 bg-amber-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-amber-600"
+                :href="versionInfo.custom.compareUrl || versionInfo.custom.branchUrl || '#'"
+                target="_blank"
+                title="你的二开仓库有新提交可部署"
+              >
+                <i class="fas fa-code-branch text-[10px]" />
+                <span>二开更新</span>
               </a>
             </div>
           </template>
@@ -70,66 +82,134 @@
             @click.stop
           >
             <!-- 版本信息 -->
-            <div class="border-b border-gray-100 px-4 py-3 dark:border-gray-700">
-              <div class="flex items-center justify-between text-sm">
-                <span class="text-gray-500 dark:text-gray-400">当前版本</span>
-                <span class="font-mono text-gray-700 dark:text-gray-300"
-                  >v{{ versionInfo.current || '...' }}</span
-                >
-              </div>
-              <div v-if="versionInfo.hasUpdate" class="mt-2">
-                <div class="mb-2 flex items-center justify-between text-sm">
-                  <span class="font-medium text-green-600 dark:text-green-400">
-                    <i class="fas fa-arrow-up mr-1" />有上游更新
+            <div class="space-y-3 border-b border-gray-100 px-4 py-3 dark:border-gray-700">
+              <div class="rounded-xl border border-gray-100 p-3 dark:border-gray-700">
+                <div class="flex items-center justify-between text-sm">
+                  <span class="text-gray-500 dark:text-gray-400">上游版本</span>
+                  <span class="font-mono text-gray-700 dark:text-gray-300">
+                    v{{ versionInfo.upstream.current || '...' }}
                   </span>
-                  <span class="font-mono text-green-600 dark:text-green-400"
-                    >v{{ versionInfo.latest }}</span
+                </div>
+                <div v-if="versionInfo.upstream.hasUpdate" class="mt-2">
+                  <div class="mb-2 flex items-center justify-between text-sm">
+                    <span class="font-medium text-green-600 dark:text-green-400">
+                      <i class="fas fa-arrow-up mr-1" />有上游更新
+                    </span>
+                    <span class="font-mono text-green-600 dark:text-green-400">
+                      v{{ versionInfo.upstream.latest }}
+                    </span>
+                  </div>
+                  <a
+                    class="block w-full rounded-lg bg-green-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-green-600"
+                    :href="versionInfo.upstream.releaseInfo?.htmlUrl || '#'"
+                    target="_blank"
                   >
+                    <i class="fas fa-external-link-alt mr-1" />查看上游更新
+                  </a>
+                  <button
+                    v-if="versionInfo.canSyncInPanel"
+                    class="mt-2 block w-full rounded-lg bg-blue-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                    :disabled="versionInfo.syncingUpdate"
+                    @click="runPanelUpdate"
+                  >
+                    <i
+                      :class="
+                        versionInfo.syncingUpdate
+                          ? 'fas fa-spinner fa-spin mr-1'
+                          : 'fas fa-download mr-1'
+                      "
+                    />
+                    {{ versionInfo.syncingUpdate ? '创建中...' : '创建同步分支' }}
+                  </button>
+                </div>
+                <div
+                  v-else-if="versionInfo.checkingUpdate"
+                  class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400"
+                >
+                  <i class="fas fa-spinner fa-spin mr-1" />检查版本中...
+                </div>
+                <div v-else class="mt-2 text-center">
+                  <transition mode="out-in" name="fade">
+                    <div
+                      v-if="versionInfo.upstream.noUpdateMessage"
+                      key="upstream-message"
+                      class="inline-block rounded-lg border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
+                    >
+                      <p class="text-xs font-medium text-green-700 dark:text-green-400">
+                        <i class="fas fa-check-circle mr-1" />当前已是上游最新版
+                      </p>
+                    </div>
+                    <button
+                      v-else
+                      key="upstream-button"
+                      class="text-xs text-blue-500 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
+                      @click="checkForUpdates()"
+                    >
+                      <i class="fas fa-sync-alt mr-1" />检查上游更新
+                    </button>
+                  </transition>
+                </div>
+                <p
+                  v-if="versionInfo.upstream.warning"
+                  class="mt-2 text-xs text-amber-600 dark:text-amber-400"
+                >
+                  {{ versionInfo.upstream.warning }}
+                </p>
+              </div>
+
+              <div class="rounded-xl border border-gray-100 p-3 dark:border-gray-700">
+                <div class="flex items-center justify-between text-sm">
+                  <span class="text-gray-500 dark:text-gray-400">二开版本</span>
+                  <span class="font-mono text-gray-700 dark:text-gray-300">
+                    {{ versionInfo.custom.current || '...' }}
+                  </span>
+                </div>
+                <div class="mt-2 flex items-center justify-between text-sm">
+                  <span
+                    :class="
+                      versionInfo.custom.hasUpdate
+                        ? 'font-medium text-amber-600 dark:text-amber-400'
+                        : 'font-medium text-green-600 dark:text-green-400'
+                    "
+                  >
+                    <i
+                      :class="
+                        versionInfo.custom.hasUpdate
+                          ? 'fas fa-code-branch mr-1'
+                          : 'fas fa-check-circle mr-1'
+                      "
+                    />
+                    {{ versionInfo.custom.hasUpdate ? '二开有更新' : '二开已同步' }}
+                  </span>
+                  <span
+                    class="font-mono"
+                    :class="
+                      versionInfo.custom.hasUpdate
+                        ? 'text-amber-600 dark:text-amber-400'
+                        : 'text-green-600 dark:text-green-400'
+                    "
+                  >
+                    {{ versionInfo.custom.latest || '...' }}
+                  </span>
                 </div>
                 <a
-                  class="block w-full rounded-lg bg-green-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-green-600"
-                  :href="versionInfo.releaseInfo?.htmlUrl || '#'"
+                  v-if="versionInfo.custom.compareUrl || versionInfo.custom.branchUrl"
+                  class="mt-2 block w-full rounded-lg bg-amber-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-amber-600"
+                  :href="versionInfo.custom.compareUrl || versionInfo.custom.branchUrl || '#'"
                   target="_blank"
                 >
-                  <i class="fas fa-external-link-alt mr-1" />查看上游更新
+                  <i class="fas fa-external-link-alt mr-1" />
+                  {{ versionInfo.custom.hasUpdate ? '查看二开差异' : '查看二开分支' }}
                 </a>
-                <button
-                  v-if="versionInfo.canSyncInPanel"
-                  class="mt-2 block w-full rounded-lg bg-blue-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                  :disabled="versionInfo.syncingUpdate"
-                  @click="runPanelUpdate"
+                <p v-if="versionInfo.custom.branch" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                  跟踪分支：{{ versionInfo.custom.branch }}
+                </p>
+                <p
+                  v-if="versionInfo.custom.warning"
+                  class="mt-2 text-xs text-amber-600 dark:text-amber-400"
                 >
-                  <i :class="versionInfo.syncingUpdate ? 'fas fa-spinner fa-spin mr-1' : 'fas fa-download mr-1'" />
-                  {{ versionInfo.syncingUpdate ? '创建中...' : '创建同步分支' }}
-                </button>
-              </div>
-              <div
-                v-else-if="versionInfo.checkingUpdate"
-                class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400"
-              >
-                <i class="fas fa-spinner fa-spin mr-1" />检查上游更新中...
-              </div>
-              <div v-else class="mt-2 text-center">
-                <!-- 已是最新版提醒 -->
-                <transition mode="out-in" name="fade">
-                  <div
-                    v-if="versionInfo.noUpdateMessage"
-                    key="message"
-                    class="inline-block rounded-lg border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
-                  >
-                    <p class="text-xs font-medium text-green-700 dark:text-green-400">
-                      <i class="fas fa-check-circle mr-1" />当前已是上游最新版
-                    </p>
-                  </div>
-                  <button
-                    v-else
-                    key="button"
-                    class="text-xs text-blue-500 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
-                    @click="checkForUpdates()"
-                  >
-                    <i class="fas fa-sync-alt mr-1" />检查上游更新
-                  </button>
-                </transition>
+                  {{ versionInfo.custom.warning }}
+                </p>
               </div>
             </div>
 
@@ -318,13 +398,25 @@ const oemLoading = computed(() => authStore.oemLoading)
 
 // 版本信息
 const versionInfo = ref({
-  current: '...',
-  latest: '',
-  hasUpdate: false,
+  upstream: {
+    current: '...',
+    latest: '',
+    hasUpdate: false,
+    releaseInfo: null,
+    noUpdateMessage: false,
+    warning: ''
+  },
+  custom: {
+    current: '...',
+    latest: '',
+    hasUpdate: false,
+    compareUrl: '',
+    branchUrl: '',
+    branch: '',
+    warning: ''
+  },
   checkingUpdate: false,
   lastChecked: null,
-  releaseInfo: null,
-  noUpdateMessage: false,
   canSyncInPanel: false,
   syncingUpdate: false
 })
@@ -390,45 +482,50 @@ const checkForUpdates = async () => {
     if (result.success) {
       const data = result.data
 
-      versionInfo.value.current = data.current
-      versionInfo.value.latest = data.latest
-      versionInfo.value.hasUpdate = data.hasUpdate
-      versionInfo.value.releaseInfo = data.releaseInfo
+      versionInfo.value.upstream = {
+        ...versionInfo.value.upstream,
+        ...(data.upstream || {})
+      }
+      versionInfo.value.custom = {
+        ...versionInfo.value.custom,
+        ...(data.custom || {})
+      }
       versionInfo.value.canSyncInPanel = data.canSyncInPanel === true
       versionInfo.value.lastChecked = new Date()
 
-      // 保存到localStorage
       localStorage.setItem(
-        'versionInfo',
+        'versionInfoV2',
         JSON.stringify({
-          current: data.current,
-          latest: data.latest,
+          upstream: versionInfo.value.upstream,
+          custom: versionInfo.value.custom,
           lastChecked: versionInfo.value.lastChecked,
-          hasUpdate: data.hasUpdate,
-          releaseInfo: data.releaseInfo
+          canSyncInPanel: versionInfo.value.canSyncInPanel
         })
       )
 
-      // 如果没有更新，显示提醒
-      if (!data.hasUpdate) {
-        versionInfo.value.noUpdateMessage = true
-        // 3秒后自动隐藏提醒
+      if (!versionInfo.value.upstream.hasUpdate) {
+        versionInfo.value.upstream.noUpdateMessage = true
         setTimeout(() => {
-          versionInfo.value.noUpdateMessage = false
+          versionInfo.value.upstream.noUpdateMessage = false
         }, 3000)
       }
     }
   } catch (error) {
     console.error('Error checking for updates:', error)
 
-    // 尝试从localStorage读取缓存的版本信息
-    const cached = localStorage.getItem('versionInfo')
+    const cached = localStorage.getItem('versionInfoV2')
     if (cached) {
       const cachedInfo = JSON.parse(cached)
-      versionInfo.value.current = cachedInfo.current || versionInfo.value.current
-      versionInfo.value.latest = cachedInfo.latest
-      versionInfo.value.hasUpdate = cachedInfo.hasUpdate
-      versionInfo.value.releaseInfo = cachedInfo.releaseInfo
+      versionInfo.value.upstream = {
+        ...versionInfo.value.upstream,
+        ...(cachedInfo.upstream || {})
+      }
+      versionInfo.value.custom = {
+        ...versionInfo.value.custom,
+        ...(cachedInfo.custom || {})
+      }
+      versionInfo.value.canSyncInPanel =
+        cachedInfo.canSyncInPanel === true || versionInfo.value.canSyncInPanel
       versionInfo.value.lastChecked = new Date(cachedInfo.lastChecked)
     }
   } finally {
