@@ -39,6 +39,7 @@
 <script setup>
 import { computed } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { getCustomTabs } from '@/custom'
 
 defineProps({
   activeTab: {
@@ -70,6 +71,8 @@ const tabs = computed(() => {
     })
   }
 
+  const customTabs = getCustomTabs(authStore) || []
+  baseTabs.push(...customTabs)
   baseTabs.push({ key: 'settings', name: '系统设置', shortName: '设置', icon: 'fas fa-cogs' })
 
   return baseTabs

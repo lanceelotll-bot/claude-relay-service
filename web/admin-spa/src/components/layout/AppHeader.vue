@@ -27,10 +27,10 @@
                 class="inline-flex animate-pulse items-center gap-1 rounded-full border border-green-600 bg-green-500 px-2 py-0.5 text-xs text-white transition-colors hover:bg-green-600"
                 :href="versionInfo.releaseInfo?.htmlUrl || '#'"
                 target="_blank"
-                title="有新版本可用"
+                title="上游有新版本可用"
               >
                 <i class="fas fa-arrow-up text-[10px]" />
-                <span>新版本</span>
+                <span>上游更新</span>
               </a>
             </div>
           </template>
@@ -80,7 +80,7 @@
               <div v-if="versionInfo.hasUpdate" class="mt-2">
                 <div class="mb-2 flex items-center justify-between text-sm">
                   <span class="font-medium text-green-600 dark:text-green-400">
-                    <i class="fas fa-arrow-up mr-1" />有新版本
+                    <i class="fas fa-arrow-up mr-1" />有上游更新
                   </span>
                   <span class="font-mono text-green-600 dark:text-green-400"
                     >v{{ versionInfo.latest }}</span
@@ -91,14 +91,14 @@
                   :href="versionInfo.releaseInfo?.htmlUrl || '#'"
                   target="_blank"
                 >
-                  <i class="fas fa-external-link-alt mr-1" />查看更新
+                  <i class="fas fa-external-link-alt mr-1" />查看上游更新
                 </a>
               </div>
               <div
                 v-else-if="versionInfo.checkingUpdate"
                 class="mt-2 text-center text-xs text-gray-500 dark:text-gray-400"
               >
-                <i class="fas fa-spinner fa-spin mr-1" />检查更新中...
+                <i class="fas fa-spinner fa-spin mr-1" />检查上游更新中...
               </div>
               <div v-else class="mt-2 text-center">
                 <!-- 已是最新版提醒 -->
@@ -109,7 +109,7 @@
                     class="inline-block rounded-lg border border-green-200 bg-green-100 px-3 py-1.5 dark:border-green-800 dark:bg-green-900/30"
                   >
                     <p class="text-xs font-medium text-green-700 dark:text-green-400">
-                      <i class="fas fa-check-circle mr-1" />当前已是最新版本
+                      <i class="fas fa-check-circle mr-1" />当前已是上游最新版
                     </p>
                   </div>
                   <button
@@ -118,7 +118,7 @@
                     class="text-xs text-blue-500 transition-colors hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300"
                     @click="checkForUpdates()"
                   >
-                    <i class="fas fa-sync-alt mr-1" />检查更新
+                    <i class="fas fa-sync-alt mr-1" />检查上游更新
                   </button>
                 </transition>
               </div>

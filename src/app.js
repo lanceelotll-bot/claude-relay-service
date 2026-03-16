@@ -12,6 +12,7 @@ const redis = require('./models/redis')
 const pricingService = require('./services/pricingService')
 const cacheMonitor = require('./utils/cacheMonitor')
 const { getSafeMessage } = require('./utils/errorSanitizer')
+const customExtensions = require('./custom')
 
 // Import routes
 const apiRoutes = require('./routes/api')
@@ -105,6 +106,9 @@ class Application {
 
       // 📊 初始化缓存监控
       await this.initializeCacheMonitoring()
+
+      // 🧩 自定义扩展初始化（用于二开，尽量减少对上游核心文件的改动）
+      await customExtensions.afterCoreInitialized(this.buildCustomContext())
 
       // 🔧 初始化管理员凭据
       logger.info('🔄 Initializing admin credentials...')
@@ -367,6 +371,9 @@ class Application {
       this.app.use('/azure', azureOpenaiRoutes)
       this.app.use('/admin/webhook', webhookRoutes)
 
+      // 🧩 自定义路由挂载点：你自己的功能尽量收敛到 src/custom 内
+      await customExtensions.mountRoutes(this.app, this.buildCustomContext())
+
       // 🏠 根路径重定向到新版管理界面
       this.app.get('/', (req, res) => {
         res.redirect('/admin-next/api-stats')
@@ -470,6 +477,21 @@ class Application {
     } catch (error) {
       logger.error('💥 Application initialization failed:', error)
       throw error
+    }
+  }
+
+  buildCustomContext() {
+    return {
+      app: this.app,
+      config,
+      express,
+      logger,
+      redis,
+      fs,
+      path,
+      services: {
+        pricingService
+      }
     }
   }
 

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserStore } from '@/stores/user'
 import { APP_CONFIG, showToast } from '@/utils/tools'
+import { getCustomRoutes } from '@/custom'
 
 // 路由懒加载
 const LoginView = () => import('@/views/LoginView.vue')
@@ -17,6 +18,7 @@ const AccountUsageRecordsView = () => import('@/views/AccountUsageRecordsView.vu
 const SettingsView = () => import('@/views/SettingsView.vue')
 const ApiStatsView = () => import('@/views/ApiStatsView.vue')
 const QuotaCardsView = () => import('@/views/QuotaCardsView.vue')
+const customRoutes = getCustomRoutes()
 
 const routes = [
   {
@@ -159,6 +161,7 @@ const routes = [
       }
     ]
   },
+  ...customRoutes,
   // 捕获所有未匹配的路由
   {
     path: '/:pathMatch(.*)*',

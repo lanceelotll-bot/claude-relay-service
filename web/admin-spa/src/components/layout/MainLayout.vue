@@ -23,12 +23,14 @@
 import { ref, watch, nextTick, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { getCustomTabs } from '@/custom'
 import AppHeader from './AppHeader.vue'
 import TabBar from './TabBar.vue'
 
 const route = useRoute()
 const router = useRouter()
 const authStore = useAuthStore()
+const customTabs = computed(() => getCustomTabs(authStore) || [])
 
 // 根据路由设置当前激活的标签
 const activeTab = ref('dashboard')
@@ -47,6 +49,12 @@ const tabRouteMap = computed(() => {
   if (authStore.oemSettings?.ldapEnabled) {
     baseMap.userManagement = '/user-management'
   }
+
+  customTabs.value.forEach((tab) => {
+    if (tab?.key && tab?.path) {
+      baseMap[tab.key] = tab.path
+    }
+  })
 
   return baseMap
 })

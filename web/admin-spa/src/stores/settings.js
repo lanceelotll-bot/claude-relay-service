@@ -6,7 +6,7 @@ import { getOemSettingsApi, updateOemSettingsApi } from '@/utils/http_apis'
 export const useSettingsStore = defineStore('settings', () => {
   // 状态
   const oemSettings = ref({
-    siteName: 'Claude Relay Service',
+    siteName: 'CRS Lance 二开版',
     siteIcon: '',
     siteIconData: '',
     showAdminButton: true,
