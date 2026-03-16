@@ -35,6 +35,19 @@ bash scripts/dev-start.sh
 bash scripts/dev-ui-start.sh
 ```
 
+During `dev-start.sh`, the repo now checks `upstream/main` automatically.
+If upstream is ahead, it prints a warning and suggests creating a sync branch.
+In interactive terminals, it will also ask whether to run:
+
+```bash
+bash scripts/git-create-sync-branch.sh
+```
+
+Optional env toggles:
+
+- `DEV_UPSTREAM_CHECK=false` to skip startup upstream check
+- `DEV_UPSTREAM_PROMPT_CREATE=false` to skip interactive prompt
+
 Double-click launchers in repo root:
 
 - `Start CRS.command`
