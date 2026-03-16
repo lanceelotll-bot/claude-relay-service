@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  claude-relay:
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-50m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
+  redis:
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-50m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+
+  # SS sidecar: convert Shadowsocks to local SOCKS5/HTTP for CRS accounts
+  ss-sidecar:
+    image: ghcr.io/sagernet/sing-box:latest
+    restart: unless-stopped
+    command: ["run", "-c", "/etc/sing-box/config.json"]
+    volumes:
+      - ./config/sing-box/config.json:/etc/sing-box/config.json:ro
+    expose:
+      - "1080" # SOCKS5 for CRS containers
+      - "1081" # HTTP for CRS containers
+    ports:
+      - "127.0.0.1:${SS_SIDECAR_SOCKS_PORT:-11080}:1080"
+      - "127.0.0.1:${SS_SIDECAR_HTTP_PORT:-11081}:1081"
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+    logging:
+      driver: json-file
+      options:
+        max-size: "${DOCKER_LOG_MAX_SIZE:-50m}"
+        max-file: "${DOCKER_LOG_MAX_FILE:-5}"
+    networks:
+      - claude-relay-network

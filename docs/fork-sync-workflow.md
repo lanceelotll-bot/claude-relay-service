@@ -94,6 +94,33 @@ npm run setup
 npm run dev
 ```
 
+## Optional: SS sidecar deployment (B strategy)
+
+If your accounts need SS egress with low ops overhead:
+
+```bash
+bash scripts/ss-sidecar-setup.sh
+bash scripts/docker-up-ss.sh
+```
+
+Then set account proxy in UI as:
+
+- type `socks5`
+- host `ss-sidecar`
+- port `1080`
+
+Quick latency test:
+
+```bash
+bash scripts/ss-sidecar-test.sh
+```
+
+Long-running auto-heal:
+
+```bash
+bash scripts/ss-sidecar-watchdog.sh
+```
+
 ## Keep machine-specific data out of Git
 
 Do not commit:

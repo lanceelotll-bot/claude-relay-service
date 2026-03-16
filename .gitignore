@@ -34,6 +34,8 @@ app.log
 # Configuration files (may contain sensitive data)
 config/config.js
 !config/config.example.js
+config/sing-box/config.json
+!config/sing-box/config.example.json
 
 # Runtime data
 pids/

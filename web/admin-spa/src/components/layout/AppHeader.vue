@@ -201,7 +201,10 @@
                   <i class="fas fa-external-link-alt mr-1" />
                   {{ versionInfo.custom.hasUpdate ? '查看二开差异' : '查看二开分支' }}
                 </a>
-                <p v-if="versionInfo.custom.branch" class="mt-2 text-xs text-gray-500 dark:text-gray-400">
+                <p
+                  v-if="versionInfo.custom.branch"
+                  class="mt-2 text-xs text-gray-500 dark:text-gray-400"
+                >
                   跟踪分支：{{ versionInfo.custom.branch }}
                 </p>
                 <p
