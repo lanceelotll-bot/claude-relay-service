@@ -2,6 +2,8 @@ const express = require('express')
 const fs = require('fs')
 const path = require('path')
 const axios = require('axios')
+const util = require('util')
+const { execFile } = require('child_process')
 const claudeCodeHeadersService = require('../../services/claudeCodeHeadersService')
 const claudeAccountService = require('../../services/account/claudeAccountService')
 const redis = require('../../models/redis')
@@ -10,6 +12,7 @@ const logger = require('../../utils/logger')
 const config = require('../../../config/config')
 
 const router = express.Router()
+const execFileAsync = util.promisify(execFile)
 
 // ==================== Claude Code Headers 管理 ====================
 
@@ -90,6 +93,16 @@ function compareVersions(current, latest) {
   return currentV.patch - latestV.patch
 }
 
+function isPanelUpdateEnabled() {
+  const value = process.env.WEB_UPDATE_ENABLED
+  if (typeof value !== 'string') {
+    return false
+  }
+
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on'
+}
+
 router.get('/check-updates', authenticateAdmin, async (req, res) => {
   // 读取当前版本
   const versionPath = path.join(__dirname, '../../../VERSION')
@@ -117,13 +130,15 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
         return res.json({
           success: true,
           data: {
-            current: currentVersion,
-            latest: cachedData.latest,
-            hasUpdate, // 实时计算，不用缓存
-            releaseInfo: cachedData.releaseInfo,
-            cached: true
-          }
-        })
+        current: currentVersion,
+        latest: cachedData.latest,
+        hasUpdate, // 实时计算，不用缓存
+        releaseInfo: cachedData.releaseInfo,
+        cached: true,
+        updateSource: 'upstream',
+        canSyncInPanel: isPanelUpdateEnabled()
+      }
+    })
       }
     }
 
@@ -169,7 +184,9 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
         latest: latestVersion,
         hasUpdate,
         releaseInfo,
-        cached: false
+        cached: false,
+        updateSource: 'upstream',
+        canSyncInPanel: isPanelUpdateEnabled()
       }
     })
   } catch (error) {
@@ -203,7 +220,9 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
             publishedAt: new Date().toISOString(),
             htmlUrl: '#'
           },
-          warning: 'GitHub repository has no releases'
+          warning: 'GitHub repository has no releases',
+          updateSource: 'upstream',
+          canSyncInPanel: isPanelUpdateEnabled()
         }
       })
     }
@@ -226,7 +245,9 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
             hasUpdate, // 实时计算
             releaseInfo: cachedData.releaseInfo,
             cached: true,
-            warning: 'Using cached data due to network error'
+            warning: 'Using cached data due to network error',
+            updateSource: 'upstream',
+            canSyncInPanel: isPanelUpdateEnabled()
           }
         })
       }
@@ -246,7 +267,73 @@ router.get('/check-updates', authenticateAdmin, async (req, res) => {
           htmlUrl: '#'
         },
         error: true,
-        warning: error.message || 'Failed to check for updates'
+        warning: error.message || 'Failed to check for updates',
+        updateSource: 'upstream',
+        canSyncInPanel: isPanelUpdateEnabled()
+      }
+    })
+  }
+})
+
+router.post('/sync-updates', authenticateAdmin, async (req, res) => {
+  if (!isPanelUpdateEnabled()) {
+    return res.status(403).json({
+      success: false,
+      message: '页面内更新未启用，请设置 WEB_UPDATE_ENABLED=true 后重试'
+    })
+  }
+
+  const repoRoot = path.join(__dirname, '../../../')
+  const syncScript = path.join(repoRoot, 'scripts/git-create-sync-branch.sh')
+
+  if (!fs.existsSync(syncScript)) {
+    return res.status(500).json({
+      success: false,
+      message: '未找到同步脚本 scripts/git-create-sync-branch.sh'
+    })
+  }
+
+  try {
+    const { stdout, stderr } = await execFileAsync('/bin/bash', [syncScript], {
+      cwd: repoRoot,
+      timeout: 5 * 60 * 1000,
+      maxBuffer: 1024 * 1024
+    })
+
+    const output = [stdout, stderr].filter(Boolean).join('\n').trim()
+    const branchMatch = output.match(/SYNC_BRANCH=(.+)/)
+    const compareUrlMatch = output.match(/COMPARE_URL=(.+)/)
+    const syncBranch = branchMatch ? branchMatch[1].trim() : ''
+    const compareUrl = compareUrlMatch ? compareUrlMatch[1].trim() : ''
+
+    logger.info(`✅ Panel update sync branch prepared successfully: ${syncBranch || 'unknown'}`)
+
+    return res.json({
+      success: true,
+      message: '已创建上游同步分支，请审核确认后再合并进 develop',
+      data: {
+        output,
+        syncBranch,
+        compareUrl
+      }
+    })
+  } catch (error) {
+    const output = [
+      error.stdout || '',
+      error.stderr || '',
+      error.message || 'Unknown error'
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+
+    logger.error('❌ Panel update sync failed:', output)
+
+    return res.status(500).json({
+      success: false,
+      message: '创建同步分支失败，常见原因是上游合并冲突或 Git 远程配置异常',
+      data: {
+        output
       }
     })
   }

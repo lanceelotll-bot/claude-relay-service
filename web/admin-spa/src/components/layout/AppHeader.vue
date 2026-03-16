@@ -93,6 +93,15 @@
                 >
                   <i class="fas fa-external-link-alt mr-1" />查看上游更新
                 </a>
+                <button
+                  v-if="versionInfo.canSyncInPanel"
+                  class="mt-2 block w-full rounded-lg bg-blue-500 px-3 py-1.5 text-center text-sm text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  :disabled="versionInfo.syncingUpdate"
+                  @click="runPanelUpdate"
+                >
+                  <i :class="versionInfo.syncingUpdate ? 'fas fa-spinner fa-spin mr-1' : 'fas fa-download mr-1'" />
+                  {{ versionInfo.syncingUpdate ? '创建中...' : '创建同步分支' }}
+                </button>
               </div>
               <div
                 v-else-if="versionInfo.checkingUpdate"
@@ -292,7 +301,7 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { showToast } from '@/utils/tools'
 
-import { checkUpdatesApi, changePasswordApi } from '@/utils/http_apis'
+import { checkUpdatesApi, changePasswordApi, syncUpdatesApi } from '@/utils/http_apis'
 import LogoTitle from '@/components/common/LogoTitle.vue'
 import ThemeToggle from '@/components/common/ThemeToggle.vue'
 import ConfirmModal from '@/components/common/ConfirmModal.vue'
@@ -315,7 +324,9 @@ const versionInfo = ref({
   checkingUpdate: false,
   lastChecked: null,
   releaseInfo: null,
-  noUpdateMessage: false
+  noUpdateMessage: false,
+  canSyncInPanel: false,
+  syncingUpdate: false
 })
 
 // 用户菜单状态
@@ -383,6 +394,7 @@ const checkForUpdates = async () => {
       versionInfo.value.latest = data.latest
       versionInfo.value.hasUpdate = data.hasUpdate
       versionInfo.value.releaseInfo = data.releaseInfo
+      versionInfo.value.canSyncInPanel = data.canSyncInPanel === true
       versionInfo.value.lastChecked = new Date()
 
       // 保存到localStorage
@@ -421,6 +433,47 @@ const checkForUpdates = async () => {
     }
   } finally {
     versionInfo.value.checkingUpdate = false
+  }
+}
+
+const runPanelUpdate = async () => {
+  if (versionInfo.value.syncingUpdate) {
+    return
+  }
+
+  const confirmed = await showConfirm(
+    '创建上游同步分支',
+    '这不会直接改你的 develop，而是基于当前 develop 创建一个上游同步分支，供你审核和测试后再决定是否合并。是否继续？',
+    '创建分支',
+    '取消',
+    'warning'
+  )
+
+  if (!confirmed) {
+    return
+  }
+
+  versionInfo.value.syncingUpdate = true
+
+  try {
+    const result = await syncUpdatesApi()
+    const compareUrl = result?.data?.compareUrl
+    const syncBranch = result?.data?.syncBranch
+    const message = compareUrl
+      ? `已创建分支 ${syncBranch}，可到 GitHub 审核后再合并`
+      : result.message || '已创建上游同步分支，请审核后再合并'
+
+    showToast(message, 'success', '同步分支已创建', 6000)
+    await checkForUpdates()
+  } catch (error) {
+    const message =
+      error?.response?.data?.message ||
+      error?.response?.data?.data?.output ||
+      error?.message ||
+      '页面内同步失败'
+    showToast(message, 'error', '上游同步失败', 6000)
+  } finally {
+    versionInfo.value.syncingUpdate = false
   }
 }
 
